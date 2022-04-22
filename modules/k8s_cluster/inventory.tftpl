@@ -1,0 +1,9 @@
+# Inventory for ${environment_name}
+[controllers]
+%{ for controller in controllers ~}
+${controller.name} ansible_host=${controller.public_ip} ansible_user=admin private_ip=${controller.private_ip} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+%{ endfor }
+[workers]
+%{ for worker in workers ~}
+${worker.name} ansible_host=${worker.public_ip} ansible_user=admin private_ip=${worker.private_ip} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+%{ endfor ~}
