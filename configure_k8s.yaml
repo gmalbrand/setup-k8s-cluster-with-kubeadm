@@ -1,0 +1,41 @@
+---
+  - name: Configure K8S with kubeadm
+    hosts: all
+    become: yes
+
+    tasks:
+      - name: Fix CRI plugin
+        shell: "sed 's/disabled_plugins/#disabled_plugins/' -i /etc/containerd/config.toml && systemctl restart containerd.service"
+
+      - name: Init main controller
+        command:
+          cmd: "kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-cert-extra-sans={{ groups['all'] | map('extract', hostvars, ['ansible_host']) | join(',') }},{{ groups['all'] | map('extract', hostvars, ['private_ip']) | join(',') }}"
+        when: inventory_hostname == groups['controllers'][0]
+
+      - name: Setup kubectl configuration for admin user
+        shell: "mkdir $HOME/.kube && sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config && sudo chown $(id -u):$(id -g) $HOME/.kube/config"
+        become: no
+        when: inventory_hostname == groups['controllers'][0]
+
+      - name: Deploy Calico
+        shell: "kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml"
+        become: no
+        when: inventory_hostname == groups['controllers'][0]
+
+      - name: Get join token
+        shell: "kubeadm token create --print-join-command"
+        become: no
+        register: join_command
+        when: inventory_hostname == groups['controllers'][0]
+
+      - name: Join worker to controller
+        shell: "{{hostvars[groups['controllers'][0]]['join_command'].stdout}}"
+        when: inventory_hostname in groups['workers']
+
+      - name: Get kubectl config file
+        fetch:
+          src: "$HOME/.kube/config"
+          dest: "./"
+          flat: yes
+        when: inventory_hostname == groups['controllers'][0]
+        become: no

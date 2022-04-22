@@ -1,0 +1,116 @@
+---
+  - name: Prepare Host for K8S
+    hosts: all
+    become: yes
+
+    tasks:
+      - name: Update hostname
+        hostname:
+          name: "{{ inventory_hostname }}"
+
+      - name: Update /etc/hosts
+        lineinfile:
+          path: /etc/hosts
+          line: "{{ hostvars[item].private_ip }}   {{ item }}"
+        loop: "{{ ansible_play_batch }}"
+
+      - name: Update /etc/cloud/templates/hosts.debian.tmpl
+        lineinfile:
+          path: /etc/cloud/templates/hosts.debian.tmpl
+          line: "{{ hostvars[item].private_ip }}   {{ item }}"
+        loop: "{{ ansible_play_batch }}"
+
+      - name: Persistent modules for containerd
+        copy:
+          dest: /etc/modules-load.d/containerd.conf
+          content: |
+            overlay
+            br_netfilter
+
+      - name: Load modules for containerd
+        command:
+          cmd: "modprobe {{ item }}"
+        loop:
+          - overlay
+          - br_netfilter
+
+      - name: Configure networking
+        copy:
+          dest: /etc/sysctl.d/99-kubernetes-cri.conf
+          content: |
+            net.bridge.bridge-nf-call-iptables  = 1
+            net.ipv4.ip_forward                 = 1
+            net.bridge.bridge-nf-call-ip6tables = 1
+
+      - name: Apply networking changes
+        command:
+          cmd: sysctl --system
+
+      - name: Disable swapp
+        command:
+          cmd: swapoff -a
+
+      - name: Install docker dependencies
+        ansible.builtin.apt:
+          name:
+            - apt-transport-https
+            - ca-certificates
+            - lsb-release
+            - curl
+            - gnupg
+          state: latest
+          update_cache: true
+
+      - name: Add Docker signing key
+        ansible.builtin.apt_key:
+          url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+          state: present
+
+      - name: Set DPKG architecture
+        set_fact:
+          dpkg_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"
+
+      - name: Add Docker repository to sources list
+        ansible.builtin.apt_repository:
+          repo: "deb [arch={{ dpkg_arch }}] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+          state: present
+          filename: docker
+
+      - name: Install containerd.io
+        ansible.builtin.apt:
+          name:
+            - containerd.io
+          state: latest
+          update_cache: yes
+
+      # This part seems deprecated, only usefull if not using last kubernetes version
+      # - name: Create containerd config directory
+      #   command:
+      #     cmd: mkdir -p /etc/containerd
+      #
+      # - name: Generate containerd default configuration
+      #   command: containerd config default | sudo tee /etc/containerd/config.toml
+      #
+      # - name: Restart containerd service
+      #   command:
+      #     cmd: systemctl restart containerd.service
+
+      - name: Add Kubernetes signing key
+        ansible.builtin.apt_key:
+          url: "https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+          state: present
+
+      - name: Add Kubernetes repository to sources list
+        ansible.builtin.apt_repository:
+          repo: "deb https://apt.kubernetes.io/ kubernetes-xenial main"
+          state: present
+          filename: kubernetes
+
+      - name: Install Kubernetes tools
+        ansible.builtin.apt:
+          name:
+            - kubelet
+            - kubeadm
+            - kubectl
+          state: latest
+          update_cache: yes
